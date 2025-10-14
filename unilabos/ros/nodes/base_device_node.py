@@ -920,16 +920,40 @@ class BaseROS2DeviceNode(Node, Generic[T]):
                             queried_resources = []
                             for resource_data in resource_inputs:
                                 r = SerialCommand.Request()
-                                r.command = json.dumps({"id": resource_data["id"], "with_children": True})
+                                # 修复格式：使用 "data" 字段传递 UUID 列表
+                                r.command = json.dumps({"data": [resource_data["id"]], "with_children": True})
+                                self.lab_logger().debug(f"请求获取资源: {resource_data['id']}")
                                 # 发送请求并等待响应
                                 response: SerialCommand_Response = await self._resource_clients[
                                     "resource_get"
                                 ].call_async(r)
+                                self.lab_logger().debug(f"资源服务响应: {response.response[:200] if response.response else '(空响应)'}")
+                                
+                                # 检查响应是否为空
+                                if not response.response or response.response.strip() == "":
+                                    self.lab_logger().error(
+                                        f"资源获取失败: 资源 {resource_data['id']} 返回空响应，可能资源不存在"
+                                    )
+                                    raise ValueError(f"资源 {resource_data['id']} 不存在或获取失败")
+                                
                                 raw_data = json.loads(response.response)
+                                
+                                # 处理响应：如果是列表，取第一个元素
+                                if isinstance(raw_data, list):
+                                    if len(raw_data) == 0:
+                                        raise ValueError(f"资源 {resource_data['id']} 未找到")
+                                    raw_data = raw_data[0]
 
                                 # 转换为 PLR 资源
                                 tree_set = ResourceTreeSet.from_raw_list(raw_data)
                                 plr_resource = tree_set.to_plr_resources()[0]
+                                
+                                # 先尝试在追踪器中查找，如果找不到则添加
+                                existing = self.resource_tracker.figure_resource(plr_resource, try_mode=True)
+                                if not existing:
+                                    self.resource_tracker.add_resource(plr_resource)
+                                    self.lab_logger().debug(f"添加资源到追踪器: {plr_resource}")
+                                
                                 queried_resources.append(plr_resource)
 
                             self.lab_logger().debug(f"资源查询结果: 共 {len(queried_resources)} 个资源")
@@ -1049,7 +1073,8 @@ class BaseROS2DeviceNode(Node, Generic[T]):
                         unique_resources = []
                         for rs in akv:  # todo: 这里目前只支持plr的类型
                             res = self.resource_tracker.parent_resource(rs)  # 获取 resource 对象
-                            if id(res) not in seen:
+                            # 过滤掉字典类型的资源，只保留 PLR 资源对象
+                            if not isinstance(res, dict) and id(res) not in seen:
                                 seen.add(id(res))
                                 unique_resources.append(res)
 

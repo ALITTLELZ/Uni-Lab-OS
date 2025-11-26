@@ -197,8 +197,77 @@ class PRCXI9300Handler(LiquidHandlerAbstract):
     ):
         self._unilabos_backend.create_protocol(protocol_name)
 
-    async def run_protocol(self):
-        return self._unilabos_backend.run_protocol()
+    async def run_protocol(self, auto_reset_after_completion: bool = True):
+        """
+        运行协议
+        
+        Args:
+            auto_reset_after_completion: 协议执行完成后是否自动归位，默认为 True
+        """
+        result = self._unilabos_backend.run_protocol(auto_reset_after_completion=auto_reset_after_completion)
+        
+        # 如果启用自动归位，等待协议完成后执行归位
+        if auto_reset_after_completion:
+            await self._wait_protocol_completion_and_reset()
+        
+        return result
+    
+    async def _wait_protocol_completion_and_reset(self):
+        """等待协议执行完成，然后执行归位"""
+        if self._unilabos_backend.debug:
+            print("PRCXI9300Handler: Debug模式，跳过等待和归位")
+            return
+        
+        print("PRCXI9300Handler: 等待协议执行完成...")
+        # 等待协议完成（通过检查步骤状态）
+        max_wait_time = 3600  # 最大等待1小时
+        check_interval = 2  # 每2秒检查一次
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait_time:
+            try:
+                # 获取步骤状态列表
+                step_states = self._unilabos_backend.api_client.step_state_list()
+                if step_states:
+                    # 检查是否所有步骤都已完成
+                    all_completed = all(
+                        step.get("State") in ["Completed", "Finished", "Done"] 
+                        for step in step_states
+                    )
+                    if all_completed:
+                        print("PRCXI9300Handler: 协议执行完成，开始归位...")
+                        break
+            except Exception as e:
+                print(f"PRCXI9300Handler: 检查协议状态时出错: {e}")
+            
+            # 等待一段时间后再次检查
+            if hasattr(self, '_ros_node') and self._ros_node is not None:
+                await self._ros_node.sleep(check_interval)
+            else:
+                await asyncio.sleep(check_interval)
+        else:
+            print("PRCXI9300Handler: 等待协议完成超时，仍将执行归位")
+        
+        # 执行归位
+        try:
+            print("PRCXI9300Handler: 执行设备归位...")
+            self._unilabos_backend.api_client.call("IAutomation", "Reset")
+            
+            # 等待归位完成
+            reset_timeout = 60  # 归位超时时间60秒
+            reset_start = time.time()
+            while time.time() - reset_start < reset_timeout:
+                if self._unilabos_backend.is_reset_ok:
+                    print("PRCXI9300Handler: 设备归位完成")
+                    return
+                if hasattr(self, '_ros_node') and self._ros_node is not None:
+                    await self._ros_node.sleep(1)
+                else:
+                    await asyncio.sleep(1)
+            
+            print("PRCXI9300Handler: 设备归位超时，但已发送归位命令")
+        except Exception as e:
+            print(f"PRCXI9300Handler: 执行归位时出错: {e}")
 
     async def remove_liquid(
         self,
@@ -482,7 +551,14 @@ class PRCXI9300Backend(LiquidHandlerBackend):
         self.protocol_name = protocol_name
         self.steps_todo_list = []
 
-    def run_protocol(self):
+    def run_protocol(self, auto_reset_after_completion: bool = True):
+        """
+        运行协议
+        
+        Args:
+            auto_reset_after_completion: 协议执行完成后是否自动归位，默认为 True
+                注意：实际的等待和归位逻辑在 Handler 的 run_protocol 方法中实现
+        """
         assert self.is_reset_ok, "PRCXI9300Backend is not reset successfully. Please call setup() first."
         run_time = time.time()
         self.matrix_info = MatrixInfo(
@@ -505,7 +581,12 @@ class PRCXI9300Backend(LiquidHandlerBackend):
         print(f"PRCXI9300Backend created solution with ID: {solution_id}")
         self.api_client.load_solution(solution_id)
         print(json.dumps(self.steps_todo_list, indent=2))
-        return self.api_client.start()
+        result = self.api_client.start()
+        
+        if auto_reset_after_completion:
+            print("PRCXI9300Backend: 协议已启动，将在执行完成后自动归位")
+        
+        return result
 
     @classmethod
     def check_channels(cls, use_channels: List[int]) -> List[int]:

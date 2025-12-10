@@ -1322,6 +1322,27 @@ class DefaultLayout:
 
 
 if __name__ == "__main__":
+
+    FETCH_LAYOUT_AND_MATERIALS_ONLY = True
+    
+    if FETCH_LAYOUT_AND_MATERIALS_ONLY:
+        # 获取布局和物料列表并保存为JSON
+        prcxi_api = PRCXI9300Api(host="192.168.1.201", port=9999)
+        matrices = prcxi_api.list_matrices()
+        materials = prcxi_api.get_all_materials()
+        
+        # 保存为格式规整的JSON文件
+        output_data = {
+            "matrices": matrices,
+            "materials": materials
+        }
+        
+        with open("prcxi_layout_and_materials.json", "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=4, ensure_ascii=False)
+        
+        print("布局和物料列表已保存到 prcxi_layout_and_materials.json")
+        exit(0)
+
     # Example usage
     # 1. 用导出的json，给每个T1 T2板子设定相应的物料，如果是孔板和枪头盒，要对应区分
     # 2. backend需要支持num channel为1的情况

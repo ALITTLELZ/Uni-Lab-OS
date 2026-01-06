@@ -489,7 +489,7 @@ class BaseROS2DeviceNode(Node, Generic[T]):
                         input_wells_ulr = [
                             convert_to_ros_msg(
                                 Resource,
-                                resource_plr_to_ulab(plr_instance.get_well(LIQUID_INPUT_SLOT), with_children=False),
+                                resource_plr_to_ulab(plr_instance.get_well(liquid_input_slot), with_children=False),
                             )
                             for r in LIQUID_INPUT_SLOT
                         ]
